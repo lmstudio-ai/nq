@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/78a3cbcf-8e8c-4c23-b83b-33b44711ef3c" width=250/>
+</p>
+
 # nq - Patch Management Tool
 
 `nq` is a tool designed to manage patch lists for submodules, providing a streamlined way to handle changes in submodules
