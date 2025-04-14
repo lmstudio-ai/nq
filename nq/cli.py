@@ -16,6 +16,29 @@ from .patches import (
 )
 
 
+def resolve_aliases(name):
+    """Resolve a patch name to its canonical name by checking aliases.
+
+    Args:
+        name: The patch name or alias to resolve
+
+    Returns:
+        The resolved patch name (original name if no alias found)
+    """
+    config = load_config()
+    patches = config.get("patches", {})
+    resolved_name = name
+
+    # Check if the name is an alias for another patch
+    for patch_name, patch_config in patches.items():
+        aliases = patch_config.get("aliases", [])
+        if aliases and name in aliases:
+            resolved_name = patch_name
+            break
+
+    return resolved_name
+
+
 def main():
     """Main entry point for the nq command-line interface."""
     parser = argparse.ArgumentParser(
@@ -118,16 +141,7 @@ def main():
         args.name = submodule_name
 
     # Resolve aliases
-    config = load_config()
-    patches = config.get("patches", {})
-    resolved_name = args.name
-
-    # Check if the name is an alias for another patch
-    for patch_name, patch_config in patches.items():
-        aliases = patch_config.get("aliases", [])
-        if aliases and args.name in aliases:
-            resolved_name = patch_name
-            break
+    resolved_name = resolve_aliases(args.name)
 
     # Convert name to workspace path
     repo_info = get_repo_paths_for(resolved_name)
