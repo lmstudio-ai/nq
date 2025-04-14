@@ -65,11 +65,14 @@ def get_repo_paths_for(name):
 
     patch = patches[name]
 
-    # Use patch name as repo name if not specified
-    repo = patch.get("repo", name)
+    # Use workspace name as repo name if `repo` is not specified
+    workspace_name = name
+    repo_name = patch.get("repo", workspace_name)
 
     # Construct paths
-    workspace_path = config["_config_dir"] / config["workspace_prefix"] / repo
-    repo_path = workspace_path / repo
+    workspace_path = (
+        config["_config_dir"] / config.get("workspace_prefix", "") / workspace_name
+    )
+    repo_path = workspace_path / repo_name
 
     return RepoInfo(name=name, workspace_path=workspace_path, repo_path=repo_path)

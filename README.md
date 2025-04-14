@@ -11,17 +11,18 @@
 The tool requires a `nq.toml` configuration file in the project root or any parent directory. The configuration format is:
 
 ```toml
-workspace_prefix = "relative/path/to/workspace"
+workspace_prefix = "relative/path/to/workspace"  # Optional, path to check for workspaces
 
-[patches.repo-name]
-repo = "repository-name"  # Optional, defaults to repo-name
+[patches.workspace-name]
+repo = "repository-name"  # Optional, defaults to workspace-name
 aliases = ["alias1", "alias2"]  # Optional, register alternative names for this repo when using the CLI
 ```
 
 ## Install nq
 You can install an editable `nq` on your system with
 ```bash
-pip install -e ./nq
+pip install -e .
+cd /path/to/my/repo
 nq list
 ```
 
