@@ -294,19 +294,3 @@ def print_status(repo_info: RepoInfo):
             print("  * Warning: Current changes don't match existing patches")
 
     return True
-
-
-# Public API functions
-def reset(repo_info: RepoInfo):
-    """Reset repository to submodule commit."""
-    return reset_repo(repo_info)
-
-
-def apply(repo_info: RepoInfo):
-    """Apply all patches from the workspace directory."""
-    return apply_patches(repo_info)
-
-
-def pull(repo_info: RepoInfo, commit_message=None):
-    """Pull latest changes from the remote repository."""
-    return pull_repo(repo_info, commit_message=commit_message)
