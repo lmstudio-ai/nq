@@ -241,6 +241,12 @@ def apply_patches(repo_info: RepoInfo) -> None:
             "`git am` auto-merge has failed. Please resolve conflicts and run `git am --continue` and `nq export`",
             file=sys.stderr,
         )
+        if e.stdout:
+            print("Command output:", file=sys.stderr)
+            print(e.stdout.decode("utf-8"), file=sys.stderr)
+        if e.stderr:
+            print("Command error output:", file=sys.stderr)
+            print(e.stderr.decode("utf-8"), file=sys.stderr)
         raise e
 
     print("All patches applied successfully")
