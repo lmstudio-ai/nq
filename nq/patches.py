@@ -210,12 +210,16 @@ def export_patches(repo_info: RepoInfo):
     return True
 
 
-def apply_patches(repo_info: RepoInfo):
-    """Apply all patches from the workspace directory using git am."""
+def apply_patches(repo_info: RepoInfo) -> None:
+    """
+    Apply all patches from the workspace directory using git am.
+
+    Throws exception if `git am` fails.
+    """
     patch_files = sorted(repo_info.workspace_path.glob("*.patch"))
     if not patch_files:
         print("No patches found to apply")
-        return True
+        return
 
     # Enable rerere
     # rerere -- Reuse recorded resolution of conflicted merges
@@ -232,15 +236,14 @@ def apply_patches(repo_info: RepoInfo):
             check=True,
             capture_output=True,
         )
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
         print(
             "`git am` auto-merge has failed. Please resolve conflicts and run `git am --continue` and `nq export`",
             file=sys.stderr,
         )
-        return False
+        raise e
 
     print("All patches applied successfully")
-    return True
 
 
 def list_patches(repo_info: RepoInfo):

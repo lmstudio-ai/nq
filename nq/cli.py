@@ -152,8 +152,7 @@ def main():
         if not export_patches(repo_info):
             sys.exit(1)
     elif args.command == "apply":
-        if not apply_patches(repo_info):
-            sys.exit(1)
+        apply_patches(repo_info)
     elif args.command == "reset":
         if not reset_repo(repo_info):
             sys.exit(1)
