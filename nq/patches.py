@@ -3,7 +3,6 @@
 import re
 import subprocess
 import sys
-from typing import NamedTuple
 from pathlib import Path
 
 from .config import RepoInfo, get_package_paths, load_config
@@ -321,11 +320,20 @@ def _get_pending_git_files(repo_path: Path) -> list[Path]:
         return []
 
 
-class ApplyResult(NamedTuple):
+class ApplyResult:
     """Result of a call to apply"""
 
-    success: bool
-    failed_target_files: list[Path] = []
+    def __init__(self, success: bool, failed_target_files: list[Path] = None):
+        self.success = success
+        self.failed_target_files = failed_target_files or []
+
+    def __bool__(self) -> bool:
+        """Convert to boolean - returns True if the operation was successful."""
+        return self.success
+
+    def __repr__(self) -> str:
+        """String representation of the result."""
+        return f"ApplyResult(success={self.success}, failed_target_files={self.failed_target_files})"
 
 
 def apply_patches(repo_info: RepoInfo) -> ApplyResult:
