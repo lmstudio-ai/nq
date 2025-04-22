@@ -3,6 +3,8 @@
 import re
 import subprocess
 import sys
+from typing import NamedTuple
+from pathlib import Path
 
 from .config import RepoInfo, get_package_paths, load_config
 
@@ -31,9 +33,9 @@ def _check_main_repo_is_clean(repo_info: RepoInfo):
     return True
 
 
-def reset_repo(repo_info: RepoInfo):
+def reset_repo(repo_info: RepoInfo, allow_uncommitted_changes=False):
     """Reset repository to submodule commit."""
-    if not check_repo_is_committed(repo_info):
+    if not allow_uncommitted_changes and not check_repo_is_committed(repo_info):
         return False
 
     # Get repository status to check if commits are exported
@@ -43,9 +45,7 @@ def reset_repo(repo_info: RepoInfo):
     # - no patches exist, or
     # - patches exist but don't match current commits
     # then we should prevent cleaning to avoid losing work
-    if not status["is_clean"] and (
-        not status["patches_exist"] or not status["patches_applied"]
-    ):
+    if not status.is_clean and (not status.patches_exist or not status.patches_applied):
         print(
             "Error: Cannot reset - you have commits that haven't been exported.",
             file=sys.stderr,
@@ -67,26 +67,32 @@ def reset_repo(repo_info: RepoInfo):
     return True
 
 
-def pull_repo(repo_info: RepoInfo, commit_message=None):
+def pull_repo(
+    repo_info: RepoInfo,
+    commit_message=None,
+    commit_sha=None,
+    allow_uncommitted_changes=False,
+):
     """Pull latest changes from the remote repository.
 
     This performs:
     1. Check if the main repo has any uncommitted changes
     2. git fetch --prune
-    3. Determines the default branch
-    4. Resets to the submodule commit
-    5. Resets to the latest on the default branch
-    6. Creates a commit in the main repo
+    3. If commit_sha is provided, reset to that specific commit
+       Otherwise, determines the default branch and resets to latest on that branch
+    4. Resets to the submodule commit if no specific commit is requested
+    5. Creates a commit in the main repo
 
     Args:
         repo_info: Repository information
         commit_message: Optional commit message for the main repo
+        commit_sha: Optional specific commit SHA to pull
 
     Returns:
         True if successful, False otherwise
     """
-    # Check if the main repo has any uncommitted changes
-    if not _check_main_repo_is_clean(repo_info):
+    # Check if the main repo has any uncommitted changes, unless explicitly allowed
+    if not allow_uncommitted_changes and not _check_main_repo_is_clean(repo_info):
         print(
             "Error: Cannot pull when there are uncommitted changes in the main repository",
             file=sys.stderr,
@@ -101,30 +107,41 @@ def pull_repo(repo_info: RepoInfo, commit_message=None):
         check=True,
     )
 
-    # Get the default branch using symbolic-ref
-    result = subprocess.run(
-        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-        cwd=repo_info.repo_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    ref_path = result.stdout.strip()
-    match = re.search(r"^refs/remotes/origin/(.+)$", ref_path)
-    if not match:
-        raise ValueError(f"Could not determine default branch of {repo_info.name}")
+    # pull default branch if commit_sha is not specified
+    if commit_sha is None:
+        # Reset to submodule commit first if not using a specific commit SHA
+        if not reset_repo(
+            repo_info, allow_uncommitted_changes=allow_uncommitted_changes
+        ):
+            return False
 
-    default_branch = match.group(1)
-    print(f"Default branch is: {default_branch}")
+        # Get the default branch using symbolic-ref
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=repo_info.repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        ref_path = result.stdout.strip()
+        match = re.search(r"^refs/remotes/origin/(.+)$", ref_path)
+        if not match:
+            raise ValueError(f"Could not determine default branch of {repo_info.name}")
 
-    # Reset to submodule commit first
-    if not reset_repo(repo_info):
-        return False
+        default_branch = match.group(1)
+        print(f"Default branch is: {default_branch}")
 
-    # Now reset to the latest on the remote default branch
-    print(f"Resetting to latest on origin/{default_branch}...")
+        # Now reset to the latest on the remote default branch
+        print(f"Resetting to latest on origin/{default_branch}...")
+        target_ref = f"origin/{default_branch}"
+    else:
+        # Use the specific commit SHA provided
+        print(f"Resetting to specific commit: {commit_sha}")
+        target_ref = commit_sha
+
+    # Reset to the target (either default branch or specific commit)
     subprocess.run(
-        ["git", "reset", "--hard", f"origin/{default_branch}"],
+        ["git", "reset", "--hard", target_ref],
         cwd=repo_info.repo_path,
         check=True,
     )
@@ -141,16 +158,32 @@ def pull_repo(repo_info: RepoInfo, commit_message=None):
 
     # Create a commit with the provided message or a default one
     if commit_message is None:
-        commit_message = f"Update {repo_info.name} to latest"
+        if commit_sha is None:
+            commit_message = f"Update {repo_info.name} to latest"
+        else:
+            commit_message = f"Update {repo_info.name} to commit {commit_sha[:7]}"
 
-    subprocess.run(
-        ["git", "commit", "-m", commit_message],
+    # Check if there are changes to commit
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain", repo_info.repo_path],
         cwd=config_dir,
         check=True,
+        capture_output=True,
+        text=True,
     )
 
-    print(f"Successfully pulled latest changes from origin/{default_branch}")
-    print(f"Commited {repo_info.name} pull: {commit_message}")
+    # Only commit if there are changes
+    if status_result.stdout.strip():
+        subprocess.run(
+            ["git", "commit", "-m", commit_message],
+            cwd=config_dir,
+            check=True,
+        )
+        print(f"Committed {repo_info.name} pull: {commit_message}")
+    else:
+        print(f"No changes to commit for {repo_info.name}")
+
+    print(f"Successfully pulled changes to {repo_info.name}")
     return True
 
 
@@ -210,16 +243,24 @@ def export_patches(repo_info: RepoInfo):
     return True
 
 
-def apply_patches(repo_info: RepoInfo) -> None:
+class ApplyResult(NamedTuple):
+    """Result of a call to apply"""
+
+    success: bool
+    failed_target_files: list[str] = []
+
+
+def apply_patches(repo_info: RepoInfo) -> ApplyResult:
     """
     Apply all patches from the workspace directory using git am.
 
-    Throws exception if `git am` fails.
+    Returns ApplyResult with list of failed target files (if any) as absolute paths.
+    When a patch fails to apply, the function will leave the uncommitted changes for manual resolution.
     """
     patch_files = sorted(repo_info.workspace_path.glob("*.patch"))
     if not patch_files:
         print("No patches found to apply")
-        return
+        return ApplyResult(success=True)
 
     # Enable rerere
     # rerere -- Reuse recorded resolution of conflicted merges
@@ -227,29 +268,82 @@ def apply_patches(repo_info: RepoInfo) -> None:
         ["git", "config", "rerere.enabled", "true"], cwd=repo_info.repo_path, check=True
     )
 
-    # Apply the patches
+    # Apply all patches at once
     print("Attempting to apply patches...")
     try:
         subprocess.run(
-            ["git", "am", "--3way", "--rerere-autoupdate"] + patch_files,
+            ["git", "am", "--3way", "--rerere-autoupdate"]
+            + [str(p) for p in patch_files],
             cwd=repo_info.repo_path,
             check=True,
             capture_output=True,
         )
+        print("All patches applied successfully")
+        return ApplyResult(success=True)
     except subprocess.CalledProcessError as e:
+        # Patch application failed, identify the conflicted files
+        failed_targets = []
+        try:
+            # Get unmerged files (conflicts)
+            unmerged_result = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=U"],
+                cwd=repo_info.repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            # Get staged files (already resolved or partially applied)
+            staged_result = subprocess.run(
+                ["git", "diff", "--name-only", "--staged"],
+                cwd=repo_info.repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            # Get unstaged modified files (not added to index)
+            unstaged_result = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=repo_info.repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            # Collect all file paths
+            all_modified_files = set()
+
+            # Process unmerged files (conflicts)
+            conflicted_files = unmerged_result.stdout.strip().split("\n")
+            conflicted_files = [
+                f for f in conflicted_files if f
+            ]  # Filter out empty strings
+            all_modified_files.update(conflicted_files)
+
+            # Process staged files
+            staged_files = staged_result.stdout.strip().split("\n")
+            staged_files = [f for f in staged_files if f]
+            all_modified_files.update(staged_files)
+
+            # Process unstaged files
+            unstaged_files = unstaged_result.stdout.strip().split("\n")
+            unstaged_files = [f for f in unstaged_files if f]
+            all_modified_files.update(unstaged_files)
+
+            # Convert all relative paths to absolute paths
+            repo_path = Path(repo_info.repo_path)
+            for file in all_modified_files:
+                absolute_path = str((repo_path / file).absolute())
+                failed_targets.append(absolute_path)
+        except subprocess.CalledProcessError:
+            # If this fails, continue without the target file info
+            pass
+
         print(
-            "`git am` auto-merge has failed. Please resolve conflicts and run `git am --continue` and `nq export`",
+            f"`git am` auto-merge has failed with error:\n\n{e}\n\nPlease resolve conflicts manually.",
             file=sys.stderr,
         )
-        if e.stdout:
-            print("Command output:", file=sys.stderr)
-            print(e.stdout.decode("utf-8"), file=sys.stderr)
-        if e.stderr:
-            print("Command error output:", file=sys.stderr)
-            print(e.stderr.decode("utf-8"), file=sys.stderr)
-        raise e
 
-    print("All patches applied successfully")
+        return ApplyResult(success=False, failed_target_files=failed_targets)
 
 
 def list_patches(repo_info: RepoInfo):
@@ -277,29 +371,29 @@ def print_status(repo_info: RepoInfo):
     """Print the status of the repository."""
     status = get_repo_status(repo_info)
 
-    if status["error"]:
-        print(f"Error: {status['error']}")
+    if status.error:
+        print(f"Error: {status.error}")
         return False
 
     print(f"Repository: {repo_info.repo_path.name}")
     print("Status:")
 
-    if status["has_uncommitted"] or status["has_untracked"]:
+    if status.has_uncommitted or status.has_untracked:
         print("- Repository has uncommitted changes:")
-        if status["has_uncommitted"]:
+        if status.has_uncommitted:
             print("  * There are uncommitted modifications")
-        if status["has_untracked"]:
+        if status.has_untracked:
             print("  * There are untracked files")
-    elif status["is_clean"]:
+    elif status.is_clean:
         print("- Repository is clean (matches submodule commit)")
-    elif status["patches_exist"] and status["patches_applied"]:
+    elif status.patches_exist and status.patches_applied:
         print("- Patches are currently applied")
     else:
         print("- Repository has committed changes that differ from submodule commit")
 
-    if status["patches_exist"]:
+    if status.patches_exist:
         print("- Patch files exist in workspace directory")
-        if not status["patches_applied"] and not status["is_clean"]:
+        if not status.patches_applied and not status.is_clean:
             print("  * Warning: Current changes don't match existing patches")
 
     return True

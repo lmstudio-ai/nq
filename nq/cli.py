@@ -82,6 +82,14 @@ def main():
         nargs="?",
         help="Name of the patch configuration (optional if in submodule)",
     )
+    reset_parser.add_argument(
+        "--allow-uncommitted-changes",
+        action="store_true",
+        help=(
+            "Allow resetting submodule even when there are uncommitted changes in the main "
+            "repository"
+        ),
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show repository patch status")
@@ -114,6 +122,15 @@ def main():
         "-m",
         "--message",
         help="Commit message for the main repo (default: 'Update [repo] to latest')",
+    )
+    pull_parser.add_argument(
+        "--commit-sha",
+        help="Specific commit SHA to pull instead of the latest on the default branch",
+    )
+    pull_parser.add_argument(
+        "--allow-uncommitted-changes",
+        action="store_true",
+        help="Allow pulling even when there are uncommitted changes in the main repository",
     )
 
     args = parser.parse_args()
@@ -152,7 +169,12 @@ def main():
         if not export_patches(repo_info):
             sys.exit(1)
     elif args.command == "apply":
-        apply_patches(repo_info)
+        apply_result = apply_patches(repo_info)
+        if apply_result.failed_target_files:
+            print("Failed to apply patches to the following files:", file=sys.stderr)
+            for failed_file in apply_result.failed_target_files:
+                print(f"  - {failed_file}", file=sys.stderr)
+            sys.exit(1)
     elif args.command == "reset":
         if not reset_repo(repo_info):
             sys.exit(1)
@@ -160,7 +182,12 @@ def main():
         if not print_status(repo_info):
             sys.exit(1)
     elif args.command == "pull":
-        if not pull_repo(repo_info, commit_message=args.message):
+        if not pull_repo(
+            repo_info,
+            commit_message=args.message,
+            commit_sha=args.commit_sha,
+            allow_uncommitted_changes=args.allow_uncommitted_changes,
+        ):
             sys.exit(1)
     elif args.command in ["list", "ls"]:
         if not list_patches(repo_info):
