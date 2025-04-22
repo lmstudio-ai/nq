@@ -3,10 +3,10 @@
 from .config import get_repo_paths_for
 from .cli import resolve_aliases
 from .patches import reset_repo, apply_patches, pull_repo, export_patches, ApplyResult
-from .git import get_repo_status, check_repo_is_committed, StatusResult
+from .git import get_repo_status, StatusResult
 
 
-def reset(name: str, allow_uncommitted_changes=False):
+def reset(name: str, force=False):
     """Reset repository to submodule commit.
 
     Args:
@@ -17,7 +17,7 @@ def reset(name: str, allow_uncommitted_changes=False):
     """
     resolved_name = resolve_aliases(name)
     repo_info = get_repo_paths_for(resolved_name)
-    return reset_repo(repo_info, allow_uncommitted_changes=allow_uncommitted_changes)
+    return reset_repo(repo_info, force=force)
 
 
 def apply(name: str) -> ApplyResult:
@@ -62,8 +62,6 @@ def export(name: str) -> bool:
     """
     resolved_name = resolve_aliases(name)
     repo_info = get_repo_paths_for(resolved_name)
-    if not check_repo_is_committed(repo_info):
-        return False
     if not export_patches(repo_info):
         return False
     return True
@@ -72,15 +70,15 @@ def export(name: str) -> bool:
 def pull(
     name: str,
     commit_message=None,
-    commit_sha=None,
-    allow_uncommitted_changes=False,
+    ref=None,
+    allow_dirty_main_repo=False,
 ):
     """Pull latest changes from the remote repository.
 
     Args:
         name: Name of the patch configuration
         commit_message: Optional commit message for the main repo
-        commit_sha: Optional commit SHA to pull a specific commit
+        ref: Optional ref to pull a specific reference. Defaults to the latest on the default branch.
 
     Returns:
         True if successful, False otherwise
@@ -90,6 +88,6 @@ def pull(
     return pull_repo(
         repo_info,
         commit_message=commit_message,
-        commit_sha=commit_sha,
-        allow_uncommitted_changes=allow_uncommitted_changes,
+        ref=ref,
+        allow_dirty_main_repo=allow_dirty_main_repo,
     )

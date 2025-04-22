@@ -11,31 +11,51 @@ from .config import RepoInfo, get_package_paths, load_config
 from .git import check_repo_is_committed, get_repo_status, get_submodule_commit
 
 
-def _check_main_repo_is_clean(repo_info: RepoInfo):
-    """Check if the main repository (not the submodule) has any staged or unstaged changes
-    in tracked files.
+def _check_main_repo_unstaged_changes(repo_info: RepoInfo) -> bool:
+    """Check if the main repository has any unstaged changes in tracked files.
 
     Args:
         repo_info: Repository information
 
     Returns:
-        True if the main repo is clean, False otherwise
+        True if there are no unstaged changes, False otherwise
     """
-    # Check for uncommitted changes in tracked files
+    # Check for unstaged changes in tracked files
     result = subprocess.run(
-        ["git", "diff-index", "--quiet", "HEAD", "--"],
+        ["git", "diff", "--quiet"],
         cwd=load_config()["_config_dir"],
     )
     if result.returncode != 0:
-        print("Error: Uncommitted changes present in main repository", file=sys.stderr)
+        print("Error: Unstaged changes present in main repository", file=sys.stderr)
         return False
 
     return True
 
 
-def reset_repo(repo_info: RepoInfo, allow_uncommitted_changes=False):
+def _check_main_repo_staged_changes(repo_info: RepoInfo) -> bool:
+    """Check if the main repository has any staged changes.
+
+    Args:
+        repo_info: Repository information
+
+    Returns:
+        True if there are no staged changes, False otherwise
+    """
+    # Check for staged changes
+    result = subprocess.run(
+        ["git", "diff", "--quiet", "--cached"],
+        cwd=load_config()["_config_dir"],
+    )
+    if result.returncode != 0:
+        print("Error: Staged changes present in main repository", file=sys.stderr)
+        return False
+
+    return True
+
+
+def reset_repo(repo_info: RepoInfo, force=False):
     """Reset repository to submodule commit."""
-    if not allow_uncommitted_changes and not check_repo_is_committed(repo_info):
+    if not force and not check_repo_is_committed(repo_info):
         return False
 
     # Get repository status to check if commits are exported
@@ -70,15 +90,15 @@ def reset_repo(repo_info: RepoInfo, allow_uncommitted_changes=False):
 def pull_repo(
     repo_info: RepoInfo,
     commit_message=None,
-    commit_sha=None,
-    allow_uncommitted_changes=False,
+    ref=None,
+    allow_dirty_main_repo=False,
 ):
     """Pull latest changes from the remote repository.
 
     This performs:
     1. Check if the main repo has any uncommitted changes
     2. git fetch --prune
-    3. If commit_sha is provided, reset to that specific commit
+    3. If ref is provided, reset to that specific reference
        Otherwise, determines the default branch and resets to latest on that branch
     4. Resets to the submodule commit if no specific commit is requested
     5. Creates a commit in the main repo
@@ -86,15 +106,26 @@ def pull_repo(
     Args:
         repo_info: Repository information
         commit_message: Optional commit message for the main repo
-        commit_sha: Optional specific commit SHA to pull
+        ref: Optional specific reference to pull (example, commit sha)
+        allow_dirty_main_repo: Allow this command to run even if the main repo has unstaged
+                               changes. In this case, will simply hard reset the submodule
+                               to `ref` commit (or latest) and commit just that change.
 
     Returns:
         True if successful, False otherwise
     """
-    # Check if the main repo has any uncommitted changes, unless explicitly allowed
-    if not allow_uncommitted_changes and not _check_main_repo_is_clean(repo_info):
+    # Don't allow unstaged changes, unless force is specified
+    if not allow_dirty_main_repo and not _check_main_repo_unstaged_changes(repo_info):
         print(
             "Error: Cannot pull when there are uncommitted changes in the main repository",
+            file=sys.stderr,
+        )
+        return False
+
+    # Always disallow staged changes
+    if not _check_main_repo_staged_changes(repo_info):
+        print(
+            "Error: Cannot nq pull when there are staged changes in the main repository",
             file=sys.stderr,
         )
         return False
@@ -107,12 +138,10 @@ def pull_repo(
         check=True,
     )
 
-    # pull default branch if commit_sha is not specified
-    if commit_sha is None:
+    # pull default branch if ref is not specified
+    if ref is None:
         # Reset to submodule commit first if not using a specific commit SHA
-        if not reset_repo(
-            repo_info, allow_uncommitted_changes=allow_uncommitted_changes
-        ):
+        if not reset_repo(repo_info, allow_dirty_main_repo=allow_dirty_main_repo):
             return False
 
         # Get the default branch using symbolic-ref
@@ -136,8 +165,8 @@ def pull_repo(
         target_ref = f"origin/{default_branch}"
     else:
         # Use the specific commit SHA provided
-        print(f"Resetting to specific commit: {commit_sha}")
-        target_ref = commit_sha
+        print(f"Resetting to specific ref: {ref}")
+        target_ref = ref
 
     # Reset to the target (either default branch or specific commit)
     subprocess.run(
@@ -158,10 +187,10 @@ def pull_repo(
 
     # Create a commit with the provided message or a default one
     if commit_message is None:
-        if commit_sha is None:
+        if ref is None:
             commit_message = f"Update {repo_info.name} to latest"
         else:
-            commit_message = f"Update {repo_info.name} to commit {commit_sha[:7]}"
+            commit_message = f"Update {repo_info.name} to ref {ref[:10]}"
 
     # Check if there are changes to commit
     status_result = subprocess.run(
@@ -189,6 +218,8 @@ def pull_repo(
 
 def export_patches(repo_info: RepoInfo):
     """Export commits as patches."""
+    if not check_repo_is_committed(repo_info):
+        return False
     # Get list of existing patch files before export
     old_patches = {p.name: p for p in repo_info.workspace_path.glob("*.patch")}
 
@@ -243,11 +274,80 @@ def export_patches(repo_info: RepoInfo):
     return True
 
 
+def _get_pending_git_files(repo_path: Path) -> list[Path]:
+    """
+    Collects unmerged (conflicted), staged, and unstaged files
+    from a git repository and returns their absolute paths.
+
+    Args:
+        repo_path: Path to the git repository
+
+    Returns:
+        A list of absolute Path objects for all pending/unmerged files.
+    """
+    failed_targets = []
+    all_modified_files = set()
+
+    try:
+        # Get unmerged files (conflicts)
+        unmerged_result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=U"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Get staged files (already resolved or partially applied)
+        staged_result = subprocess.run(
+            ["git", "diff", "--name-only", "--staged"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Get unstaged modified files (not added to index)
+        unstaged_result = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Process unmerged files (conflicts)
+        conflicted_files = unmerged_result.stdout.strip().split("\n")
+        conflicted_files = [
+            # Filter out empty strings
+            f
+            for f in conflicted_files
+            if len(f) == 0
+        ]
+        all_modified_files.update(conflicted_files)
+
+        # Process staged files
+        staged_files = [f for f in staged_result.stdout.strip().split("\n") if f]
+        all_modified_files.update(staged_files)
+
+        # Process unstaged files
+        unstaged_files = [f for f in unstaged_result.stdout.strip().split("\n") if f]
+        all_modified_files.update(unstaged_files)
+
+        # Convert all relative paths to absolute paths
+        failed_targets = [(repo_path / file).absolute() for file in all_modified_files]
+    except subprocess.CalledProcessError:
+        # If this fails, continue without the target file info
+        pass
+
+    return failed_targets
+
+
 class ApplyResult(NamedTuple):
     """Result of a call to apply"""
 
     success: bool
-    failed_target_files: list[str] = []
+    failed_target_files: list[Path] = []
 
 
 def apply_patches(repo_info: RepoInfo) -> ApplyResult:
@@ -281,59 +381,9 @@ def apply_patches(repo_info: RepoInfo) -> ApplyResult:
         print("All patches applied successfully")
         return ApplyResult(success=True)
     except subprocess.CalledProcessError as e:
-        # Patch application failed, identify the conflicted files
-        failed_targets = []
+        # Patch application failed, identify the unmerged files
         try:
-            # Get unmerged files (conflicts)
-            unmerged_result = subprocess.run(
-                ["git", "diff", "--name-only", "--diff-filter=U"],
-                cwd=repo_info.repo_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            # Get staged files (already resolved or partially applied)
-            staged_result = subprocess.run(
-                ["git", "diff", "--name-only", "--staged"],
-                cwd=repo_info.repo_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            # Get unstaged modified files (not added to index)
-            unstaged_result = subprocess.run(
-                ["git", "diff", "--name-only"],
-                cwd=repo_info.repo_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-            # Collect all file paths
-            all_modified_files = set()
-
-            # Process unmerged files (conflicts)
-            conflicted_files = unmerged_result.stdout.strip().split("\n")
-            conflicted_files = [
-                f for f in conflicted_files if f
-            ]  # Filter out empty strings
-            all_modified_files.update(conflicted_files)
-
-            # Process staged files
-            staged_files = staged_result.stdout.strip().split("\n")
-            staged_files = [f for f in staged_files if f]
-            all_modified_files.update(staged_files)
-
-            # Process unstaged files
-            unstaged_files = unstaged_result.stdout.strip().split("\n")
-            unstaged_files = [f for f in unstaged_files if f]
-            all_modified_files.update(unstaged_files)
-
-            # Convert all relative paths to absolute paths
-            repo_path = Path(repo_info.repo_path)
-            for file in all_modified_files:
-                absolute_path = str((repo_path / file).absolute())
-                failed_targets.append(absolute_path)
+            failed_targets = _get_pending_git_files(repo_info.repo_path)
         except subprocess.CalledProcessError:
             # If this fails, continue without the target file info
             pass

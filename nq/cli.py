@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .config import get_repo_paths_for, load_config
-from .git import check_repo_is_committed, init_repo, is_in_submodule
+from .git import init_repo, is_in_submodule
 from .patches import (
     apply_patches,
     export_patches,
@@ -83,12 +83,9 @@ def main():
         help="Name of the patch configuration (optional if in submodule)",
     )
     reset_parser.add_argument(
-        "--allow-uncommitted-changes",
+        "--force",
         action="store_true",
-        help=(
-            "Allow resetting submodule even when there are uncommitted changes in the main "
-            "repository"
-        ),
+        help="forcefully reset the repository even if there are uncommitted changes",
     )
 
     # Status command
@@ -124,13 +121,17 @@ def main():
         help="Commit message for the main repo (default: 'Update [repo] to latest')",
     )
     pull_parser.add_argument(
-        "--commit-sha",
-        help="Specific commit SHA to pull instead of the latest on the default branch",
+        "--ref",
+        help="Specific ref to pull instead of latest on the default branch",
     )
     pull_parser.add_argument(
-        "--allow-uncommitted-changes",
+        "--allow-dirty-main-repo",
         action="store_true",
-        help="Allow pulling even when there are uncommitted changes in the main repository",
+        help=(
+            "Allow this command to run even if the main repo has unstaged. In this case, will "
+            "simply hard reset the submodule to `ref` commit (or latest) and commit just "
+            "that change to the main repo"
+        ),
     )
 
     args = parser.parse_args()
@@ -164,8 +165,6 @@ def main():
     repo_info = get_repo_paths_for(resolved_name)
 
     if args.command == "export":
-        if not check_repo_is_committed(repo_info):
-            sys.exit(1)
         if not export_patches(repo_info):
             sys.exit(1)
     elif args.command == "apply":
@@ -176,7 +175,7 @@ def main():
                 print(f"  - {failed_file}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "reset":
-        if not reset_repo(repo_info):
+        if not reset_repo(repo_info, force=args.force):
             sys.exit(1)
     elif args.command == "status":
         if not print_status(repo_info):
@@ -185,8 +184,8 @@ def main():
         if not pull_repo(
             repo_info,
             commit_message=args.message,
-            commit_sha=args.commit_sha,
-            allow_uncommitted_changes=args.allow_uncommitted_changes,
+            ref=args.ref,
+            allow_dirty_main_repo=args.allow_dirty_main_repo,
         ):
             sys.exit(1)
     elif args.command in ["list", "ls"]:
