@@ -85,7 +85,10 @@ def main():
     reset_parser.add_argument(
         "--force",
         action="store_true",
-        help="forcefully reset the repository even if there are uncommitted changes",
+        help=(
+            "Reset the repository even if there are uncommitted or unexported changes."
+            "This will destroy unexported dev work"
+        ),
     )
 
     # Status command

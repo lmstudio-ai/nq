@@ -79,6 +79,8 @@ def pull(
         name: Name of the patch configuration
         commit_message: Optional commit message for the main repo
         ref: Optional ref to pull a specific reference. Defaults to the latest on the default branch.
+        allow_dirty_main_repo: Allow pulling changes when the main repo has uncommitted changes.
+                               Unstaged changes never allowed, since this command commits.
 
     Returns:
         True if successful, False otherwise

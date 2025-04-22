@@ -126,7 +126,7 @@ def pull_repo(
         )
         return False
 
-    # Always disallow staged changes
+    # Don't allow staged changes in the main repository
     if not _check_main_repo_staged_changes(repo_info):
         print(
             "Error: Cannot nq pull when there are staged changes in the main repository",
@@ -289,62 +289,36 @@ def _get_pending_git_files(repo_path: Path) -> list[Path]:
     Returns:
         A list of absolute Path objects for all pending/unmerged files.
     """
-    failed_targets = []
     all_modified_files = set()
 
+    # Define the git commands to run
+    git_commands = [
+        ["git", "diff", "--name-only", "--diff-filter=U"],  # unmerged (conflicts)
+        ["git", "diff", "--name-only", "--staged"],  # staged files
+        ["git", "diff", "--name-only"],  # unstaged files
+    ]
+
     try:
-        # Get unmerged files (conflicts)
-        unmerged_result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        # Run each git command and collect the files
+        for command in git_commands:
+            result = subprocess.run(
+                command,
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
-        # Get staged files (already resolved or partially applied)
-        staged_result = subprocess.run(
-            ["git", "diff", "--name-only", "--staged"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-        # Get unstaged modified files (not added to index)
-        unstaged_result = subprocess.run(
-            ["git", "diff", "--name-only"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-        # Process unmerged files (conflicts)
-        conflicted_files = unmerged_result.stdout.strip().split("\n")
-        conflicted_files = [
-            # Filter out empty strings
-            f
-            for f in conflicted_files
-            if len(f) == 0
-        ]
-        all_modified_files.update(conflicted_files)
-
-        # Process staged files
-        staged_files = [f for f in staged_result.stdout.strip().split("\n") if f]
-        all_modified_files.update(staged_files)
-
-        # Process unstaged files
-        unstaged_files = [f for f in unstaged_result.stdout.strip().split("\n") if f]
-        all_modified_files.update(unstaged_files)
+            # Process the output and add non-empty entries to the set
+            files = [f for f in result.stdout.strip().split("\n") if f]
+            all_modified_files.update(files)
 
         # Convert all relative paths to absolute paths
-        failed_targets = [(repo_path / file).absolute() for file in all_modified_files]
+        return [(repo_path / file).absolute() for file in all_modified_files]
+
     except subprocess.CalledProcessError:
         # If this fails, continue without the target file info
-        pass
-
-    return failed_targets
+        return []
 
 
 class ApplyResult(NamedTuple):
