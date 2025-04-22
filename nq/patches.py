@@ -65,7 +65,11 @@ def reset_repo(repo_info: RepoInfo, force=False):
     # - no patches exist, or
     # - patches exist but don't match current commits
     # then we should prevent cleaning to avoid losing work
-    if not status.is_clean and (not status.patches_exist or not status.patches_applied):
+    if (
+        not force
+        and not status.is_clean
+        and (not status.patches_exist or not status.patches_applied)
+    ):
         print(
             "Error: Cannot reset - you have commits that haven't been exported.",
             file=sys.stderr,
@@ -141,7 +145,7 @@ def pull_repo(
     # pull default branch if ref is not specified
     if ref is None:
         # Reset to submodule commit first if not using a specific commit SHA
-        if not reset_repo(repo_info, allow_dirty_main_repo=allow_dirty_main_repo):
+        if not reset_repo(repo_info):
             return False
 
         # Get the default branch using symbolic-ref
