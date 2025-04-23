@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess
 import sys
+from dataclasses import dataclass
 
 
 def is_in_submodule(path: Path = None) -> tuple[bool, str | None]:
@@ -151,64 +152,93 @@ def check_repo_is_committed(repo_info):
     return True
 
 
-def get_repo_status(repo_info):
+@dataclass
+class StatusResult:
+    """Status of an nq repository."""
+
+    name: str
+    workspace_path: Path
+    repo_path: Path
+    is_clean: bool
+    has_uncommitted: bool
+    has_untracked: bool
+    patches_exist: bool
+    patches_applied: bool
+    error: str | None
+
+
+def get_repo_status(repo_info) -> StatusResult:
     """Get detailed status of the repository."""
-    status = {
-        "is_clean": True,
-        "has_uncommitted": False,
-        "has_untracked": False,
-        "patches_exist": False,
-        "patches_applied": False,
-        "error": None,
-    }
-
-    # Check if it's a git repo
-    subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=repo_info.repo_path,
-        check=True,
-        capture_output=True,
+    status = StatusResult(
+        name=repo_info.name,
+        workspace_path=repo_info.workspace_path,
+        repo_path=repo_info.repo_path,
+        is_clean=True,
+        has_uncommitted=False,
+        has_untracked=False,
+        patches_exist=False,
+        patches_applied=False,
+        error=None,
     )
 
-    # Check for untracked files
-    untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=repo_info.repo_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-    status["has_untracked"] = bool(untracked)
-
-    # Check for uncommitted changes
-    result = subprocess.run(
-        ["git", "diff-index", "--quiet", "HEAD", "--"], cwd=repo_info.repo_path
-    )
-    status["has_uncommitted"] = result.returncode != 0
-
-    # Check if clean (matches submodule commit)
-    submodule_commit = get_submodule_commit(repo_info)
-    result = subprocess.run(
-        ["git", "diff", "--quiet", submodule_commit, "HEAD"], cwd=repo_info.repo_path
-    )
-    status["is_clean"] = result.returncode == 0
-
-    # Check for patches
-    patches = list(repo_info.workspace_path.glob("*.patch"))
-    status["patches_exist"] = bool(patches)
-
-    # Check if patches are applied
-    if status["patches_exist"] and status["is_clean"] is False:
-        # Get the number of commits ahead of origin/main
-        result = subprocess.run(
-            ["git", "rev-list", "--count", f"{get_submodule_commit(repo_info)}..HEAD"],
+    try:
+        # Check if it's a git repo
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
             cwd=repo_info.repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        # Check for untracked files
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=repo_info.repo_path,
+            check=True,
             capture_output=True,
             text=True,
-            check=True,
+        ).stdout.strip()
+
+        status.has_untracked = bool(untracked)
+
+        # Check for uncommitted changes
+        result = subprocess.run(
+            ["git", "diff-index", "--quiet", "HEAD", "--"], cwd=repo_info.repo_path
         )
-        commits_ahead = int(result.stdout.strip())
-        status["patches_applied"] = commits_ahead == len(patches)
+        status.has_uncommitted = result.returncode != 0
+
+        # Check if clean (matches submodule commit)
+        submodule_commit = get_submodule_commit(repo_info)
+        result = subprocess.run(
+            ["git", "diff", "--quiet", submodule_commit, "HEAD"],
+            cwd=repo_info.repo_path,
+        )
+        status.is_clean = result.returncode == 0
+
+        # Check for patches
+        patches = list(repo_info.workspace_path.glob("*.patch"))
+        status.patches_exist = bool(patches)
+
+        # Check if patches are applied
+        if status.patches_exist and status.is_clean is False:
+            # Get the number of commits ahead of origin/main
+            result = subprocess.run(
+                [
+                    "git",
+                    "rev-list",
+                    "--count",
+                    f"{get_submodule_commit(repo_info)}..HEAD",
+                ],
+                cwd=repo_info.repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            commits_ahead = int(result.stdout.strip())
+            status.patches_applied = commits_ahead == len(patches)
+
+    except Exception as e:
+        status.is_clean = False
+        status.error = str(e)
 
     return status

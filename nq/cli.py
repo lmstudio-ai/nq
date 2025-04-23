@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .config import get_repo_paths_for, load_config
-from .git import check_repo_is_committed, init_repo, is_in_submodule
+from .git import init_repo, is_in_submodule
 from .patches import (
     apply_patches,
     export_patches,
@@ -82,6 +82,14 @@ def main():
         nargs="?",
         help="Name of the patch configuration (optional if in submodule)",
     )
+    reset_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Reset the repository even if there are uncommitted or unexported changes."
+            "This will destroy unexported dev work"
+        ),
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show repository patch status")
@@ -115,6 +123,19 @@ def main():
         "--message",
         help="Commit message for the main repo (default: 'Update [repo] to latest')",
     )
+    pull_parser.add_argument(
+        "--ref",
+        help="Specific ref to pull instead of latest on the default branch",
+    )
+    pull_parser.add_argument(
+        "--allow-dirty-main-repo",
+        action="store_true",
+        help=(
+            "Allow this command to run even if the main repo has unstaged. In this case, will "
+            "simply hard reset the submodule to `ref` commit (or latest) and commit just "
+            "that change to the main repo"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -147,20 +168,28 @@ def main():
     repo_info = get_repo_paths_for(resolved_name)
 
     if args.command == "export":
-        if not check_repo_is_committed(repo_info):
-            sys.exit(1)
         if not export_patches(repo_info):
             sys.exit(1)
     elif args.command == "apply":
-        apply_patches(repo_info)
+        apply_result = apply_patches(repo_info)
+        if apply_result.failed_target_files:
+            print("Failed to apply patches to the following files:", file=sys.stderr)
+            for failed_file in apply_result.failed_target_files:
+                print(f"  - {failed_file}", file=sys.stderr)
+            sys.exit(1)
     elif args.command == "reset":
-        if not reset_repo(repo_info):
+        if not reset_repo(repo_info, force=args.force):
             sys.exit(1)
     elif args.command == "status":
         if not print_status(repo_info):
             sys.exit(1)
     elif args.command == "pull":
-        if not pull_repo(repo_info, commit_message=args.message):
+        if not pull_repo(
+            repo_info,
+            commit_message=args.message,
+            ref=args.ref,
+            allow_dirty_main_repo=args.allow_dirty_main_repo,
+        ):
             sys.exit(1)
     elif args.command in ["list", "ls"]:
         if not list_patches(repo_info):
