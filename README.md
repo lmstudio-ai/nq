@@ -18,12 +18,22 @@ repo = "repository-name"  # Optional, defaults to workspace-name
 aliases = ["alias1", "alias2"]  # Optional, register alternative names for this repo when using the CLI
 ```
 
-## Install nq
-You can install an editable `nq` on your system with
+The expectation is that your patches are placed in a dir named `patches`, and the submodules are placed in `src`. Example:
 ```bash
-pip install -e .
-cd /path/to/my/repo
-nq list
+workspace_prefix
+├── patches
+│   └── torch
+│       └── 0001-improve-kernel-performance
+└── src
+    └── torch
+
+```
+
+## Install nq
+
+Install the latest version of `nq`:
+```bash
+pip install git+https://github.com/lmstudio-ai/nq.git
 ```
 
 ## Commands
