@@ -224,7 +224,7 @@ def export_patches(repo_info: RepoInfo):
     if not check_repo_is_committed(repo_info):
         return False
     # Get list of existing patch files before export
-    old_patches = {p.name: p for p in repo_info.workspace_path.glob("*.patch")}
+    old_patches = {p.name: p for p in repo_info.patches_path.glob("*.patch")}
 
     # Generate the patches with format-patch
     subprocess.run(
@@ -234,17 +234,17 @@ def export_patches(repo_info: RepoInfo):
             "--zero-commit",
             "--diff-algorithm=patience",
             "--output-directory",
-            str(repo_info.workspace_path),
+            str(repo_info.patches_path),
             get_submodule_commit(repo_info),
         ],
         cwd=repo_info.repo_path,
         check=True,
     )
 
-    print(f"Patches exported to: {repo_info.workspace_path}")
+    print(f"Patches exported to: {repo_info.patches_path}")
 
     # Check for duplicate patch numbers with different filenames
-    new_patches = {p.name: p for p in repo_info.workspace_path.glob("*.patch")}
+    new_patches = {p.name: p for p in repo_info.patches_path.glob("*.patch")}
     for new_patch in new_patches.values():
         # Extract patch number (e.g. "0001" from "0001-something.patch")
         patch_num = new_patch.name.split("-")[0]
@@ -258,7 +258,7 @@ def export_patches(repo_info: RepoInfo):
                 try:
                     subprocess.run(
                         ["git", "rm", "--quiet", old_name],
-                        cwd=repo_info.workspace_path,
+                        cwd=repo_info.patches_path,
                         check=True,
                         capture_output=True,
                     )
@@ -269,7 +269,7 @@ def export_patches(repo_info: RepoInfo):
     # Stage any new patch files
     subprocess.run(
         ["git", "add", "*.patch"],
-        cwd=repo_info.workspace_path,
+        cwd=repo_info.patches_path,
         check=True,
     )
 
@@ -323,7 +323,7 @@ def _get_pending_git_files(repo_path: Path) -> list[Path]:
 class ApplyResult:
     """Result of a call to apply"""
 
-    def __init__(self, success: bool, failed_target_files: list[Path] = None):
+    def __init__(self, success: bool, failed_target_files: list[Path] | None = None):
         self.success = success
         self.failed_target_files = failed_target_files or []
 
@@ -338,12 +338,12 @@ class ApplyResult:
 
 def apply_patches(repo_info: RepoInfo) -> ApplyResult:
     """
-    Apply all patches from the workspace directory using git am.
+    Apply all patches from the patches directory using git am.
 
     Returns ApplyResult with list of failed target files (if any) as absolute paths.
     When a patch fails to apply, the function will leave the uncommitted changes for manual resolution.
     """
-    patch_files = sorted(repo_info.workspace_path.glob("*.patch"))
+    patch_files = sorted(repo_info.patches_path.glob("*.patch"))
     if not patch_files:
         print("No patches found to apply")
         return ApplyResult(success=True)
@@ -383,11 +383,11 @@ def apply_patches(repo_info: RepoInfo) -> ApplyResult:
 
 
 def list_patches(repo_info: RepoInfo):
-    """List all patch files in the workspace directory."""
-    patch_files = sorted(repo_info.workspace_path.glob("*.patch"))
+    """List all patch files in the patches directory."""
+    patch_files = sorted(repo_info.patches_path.glob("*.patch"))
 
     if not patch_files:
-        print("No patches found in workspace")
+        print("No patches found in patches directory")
         return True
 
     for patch_file in patch_files:
@@ -397,10 +397,8 @@ def list_patches(repo_info: RepoInfo):
 
 def list_names():
     """List all patch names in the configuration."""
-    [
+    for repo_info in get_package_paths():
         print(f"{repo_info.name}\t{repo_info.repo_path}")
-        for repo_info in get_package_paths()
-    ]
 
 
 def print_status(repo_info: RepoInfo):

@@ -11,6 +11,7 @@ class RepoInfo(NamedTuple):
     name: str
     workspace_path: Path
     repo_path: Path
+    patches_path: Path
 
 
 def load_config():
@@ -33,11 +34,11 @@ def load_config():
         current = parent
 
 
-def get_package_paths() -> List[str]:
-    """Get all package names from nq.toml.
+def get_package_paths() -> List[RepoInfo]:
+    """Get all package paths from nq.toml.
 
     Returns:
-        List of package names defined in the configuration
+        List of RepoInfo objects for all packages defined in the configuration
     """
     config = load_config()
     result = []
@@ -48,13 +49,13 @@ def get_package_paths() -> List[str]:
 
 
 def get_repo_paths_for(name):
-    """Get workspace and repo paths for a given patch name.
+    """Get workspace, repo, and patches paths for a given patch name.
 
     Args:
         name: Name of the patch to look up
 
     Returns:
-        Paths namedtuple containing workspace_path and repo_path
+        RepoInfo namedtuple containing workspace_path, repo_path, and patches_path
     """
     config = load_config()
     patches = config.get("patches", {})
@@ -70,9 +71,13 @@ def get_repo_paths_for(name):
     repo_name = patch.get("repo", workspace_name)
 
     # Construct paths
-    workspace_path = (
-        config["_config_dir"] / config.get("workspace_prefix", "") / workspace_name
-    )
-    repo_path = workspace_path / repo_name
+    workspace_path = config["_config_dir"] / config.get("workspace_prefix", "")
+    repo_path = workspace_path / "src" / repo_name
+    patches_path = workspace_path / "patches" / workspace_name
 
-    return RepoInfo(name=name, workspace_path=workspace_path, repo_path=repo_path)
+    return RepoInfo(
+        name=name,
+        workspace_path=workspace_path,
+        repo_path=repo_path,
+        patches_path=patches_path,
+    )

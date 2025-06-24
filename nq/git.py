@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 
 
-def is_in_submodule(path: Path = None) -> tuple[bool, str | None]:
+def is_in_submodule(path: Path | None = None) -> tuple[bool, str | None]:
     """Check if the current directory is inside a submodule.
 
     Args:
@@ -67,15 +67,23 @@ def init_repo(url: str, config: dict) -> bool:
     # Extract repo name from URL
     repo_name = url.split("/")[-1].replace(".git", "")
 
-    # Add the submodule
-    clone_in = config["_config_dir"] / config["workspace_prefix"] / repo_name
-    Path(clone_in).mkdir(parents=True, exist_ok=True)
+    # Create the src directory if it doesn't exist
+    src_dir = config["_config_dir"] / config["workspace_prefix"] / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    # Add the submodule in the src directory
     subprocess.run(
-        ["git", "submodule", "add", url],
+        ["git", "submodule", "add", url, f"src/{repo_name}"],
         check=True,
         text=True,
-        cwd=clone_in,
+        cwd=config["_config_dir"] / config["workspace_prefix"],
     )
+
+    # Create the patches directory
+    patches_dir = (
+        config["_config_dir"] / config["workspace_prefix"] / "patches" / repo_name
+    )
+    patches_dir.mkdir(parents=True, exist_ok=True)
 
     # Append new patch config to nq.toml at the root of the parent repo
     nq_toml_path = config["_config_dir"] / "nq.toml"
@@ -96,7 +104,7 @@ def init_repo(url: str, config: dict) -> bool:
 
 def get_submodule_commit(repo_info):
     """Get the commit hash that the submodule is pinned to in the parent repo."""
-    cmd = ["git", "ls-tree", "HEAD", str(repo_info.repo_path.name)]
+    cmd = ["git", "ls-tree", "HEAD", repo_info.repo_path]
     result = subprocess.run(
         cmd,
         cwd=repo_info.workspace_path,
@@ -216,7 +224,7 @@ def get_repo_status(repo_info) -> StatusResult:
         status.is_clean = result.returncode == 0
 
         # Check for patches
-        patches = list(repo_info.workspace_path.glob("*.patch"))
+        patches = list(repo_info.patches_path.glob("*.patch"))
         status.patches_exist = bool(patches)
 
         # Check if patches are applied
