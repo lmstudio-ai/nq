@@ -23,7 +23,7 @@ The expectation is that your patches are placed in a dir named `patches`, and th
 workspace_prefix
 ├── patches
 │   └── torch
-│       └── 0001-improve-kernel-performance
+│       └── 0001-improve-kernel-performance.patch
 └── src
     └── torch
 
