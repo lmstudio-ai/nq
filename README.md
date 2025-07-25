@@ -14,7 +14,7 @@ The tool requires a `nq.toml` configuration file in the project root or any pare
 workspace_prefix = "relative/path/to/workspace"  # Optional, path to check for workspaces
 
 [patches.workspace-name]
-repo = "repository-name"  # Optional, defaults to workspace-name
+repo = "src/repository-name"  # Optional, defaults to workspace-name
 aliases = ["alias1", "alias2"]  # Optional, register alternative names for this repo when using the CLI
 ```
 
